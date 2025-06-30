@@ -26,13 +26,13 @@ if not WEBKUL_API_KEY or not ASAAS_API_KEY:
         print("⚠️ Variável WEBKUL_API_KEY não encontrada.")
     sys.exit(1)
 
-# 🔐 Função auxiliar para gerar senha aleatória
+# 🔐 Gera senha aleatória
 def gerar_senha(tamanho=10):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=tamanho))
 
-# 🔎 Buscar dados do cliente no Asaas
+# 🔎 Buscar dados do cliente (ASAAS - sandbox)
 def get_customer_data(customer_id):
-    url = f"https://www.asaas.com/api/v3/customers/{customer_id}"
+    url = f"https://sandbox.asaas.com/api/v3/customers/{customer_id}"
     headers = {"access_token": ASAAS_API_KEY}
     resp = requests.get(url, headers=headers)
     if resp.status_code == 200:
@@ -41,9 +41,9 @@ def get_customer_data(customer_id):
         print("❌ Erro ao buscar cliente Asaas:", resp.status_code, resp.text)
         return {}
 
-# 🔎 Buscar dados do pagamento no Asaas
+# 🔎 Buscar dados do pagamento (ASAAS - sandbox)
 def get_payment_data(payment_id):
-    url = f"https://www.asaas.com/api/v3/payments/{payment_id}"
+    url = f"https://sandbox.asaas.com/api/v3/payments/{payment_id}"
     headers = {"access_token": ASAAS_API_KEY}
     resp = requests.get(url, headers=headers)
     if resp.status_code == 200:
@@ -52,7 +52,7 @@ def get_payment_data(payment_id):
         print("❌ Erro ao buscar pagamento Asaas:", resp.status_code, resp.text)
         return {}
 
-# 📥 Rota de webhook
+# 📥 Rota para receber eventos do Asaas
 @app.route("/webhook-asaas", methods=["POST"])
 def webhook():
     data = request.get_json()
@@ -61,32 +61,39 @@ def webhook():
     if data.get("event") == "PAYMENT_CONFIRMED":
         payment = data.get("payment", {})
         payment_id = payment.get("id")
-        customer_raw = payment.get("customer", None)
+        customer_raw = payment.get("customer")
         print("📦 Valor de payment['customer']:", customer_raw)
 
         customer = {}
+
         if isinstance(customer_raw, str):
             customer = get_customer_data(customer_raw)
         elif isinstance(customer_raw, dict):
             customer = customer_raw
         else:
-            print("⚠️ 'customer' ausente ou inválido, buscando com payment_id...")
+            print("⚠️ 'customer' ausente ou inválido, buscando pelo payment_id...")
             payment_full = get_payment_data(payment_id)
             if payment_full:
                 customer_id = payment_full.get("customer")
                 if customer_id:
                     customer = get_customer_data(customer_id)
 
-        nome = customer.get("name", "")
-        email = customer.get("email", "")
-        telefone = customer.get("phone", "") or "11999999999"
+        # 🧾 Extrair dados do cliente
+        nome = customer.get("name")
+        email = customer.get("email")
+        telefone = customer.get("phone") or "11999999999"
+
+        # ⚠️ Verifica se os dados são válidos
+        if not nome or not email:
+            print("⚠️ Dados do cliente incompletos. Nome ou email ausente.")
+            return "Cliente inválido", 400
 
         print(f"🛒 Criando vendedor: {nome}, {email}, {telefone}")
         criar_vendedor_webkul(nome, email, telefone)
 
     return "ok", 200
 
-# 🔧 Criação do vendedor na Webkul
+# 🧑‍💼 Criação do vendedor na Webkul
 def criar_vendedor_webkul(nome, email, telefone):
     url = "https://mvmapi.webkul.com/api/v2/sellers.json"
     headers = {
@@ -116,7 +123,7 @@ def criar_vendedor_webkul(nome, email, telefone):
     else:
         print("❌ Erro ao criar vendedor Webkul:", response.status_code, response.text)
 
-# ▶️ Iniciar servidor Flask
+# ▶️ Iniciar app Flask
 if __name__ == "__main__":
     print("✅ Ambiente validado com sucesso.")
     app.run(host="0.0.0.0", port=8000)
