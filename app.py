@@ -16,31 +16,51 @@ def get_customer_data(customer_id):
     if resp.status_code == 200:
         return resp.json()
     else:
-        print(f"Erro ao buscar cliente Asaas: {resp.status_code} {resp.text}")
+        print(f"❌ Erro ao buscar cliente Asaas: {resp.status_code} {resp.text}")
+        return {}
+
+def get_payment_data(payment_id):
+    url = f"https://www.asaas.com/api/v3/payments/{payment_id}"
+    headers = {"access_token": ASAAS_API_KEY}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code == 200:
+        return resp.json()
+    else:
+        print(f"❌ Erro ao buscar pagamento Asaas: {resp.status_code} {resp.text}")
         return {}
 
 @app.route("/webhook-asaas", methods=["POST"])
 def webhook():
     data = request.get_json()
-    print("Webhook recebido:", data)
+    print("🚨 Webhook recebido do Asaas:", data)
 
     if data.get("event") == "PAYMENT_CONFIRMED":
         payment = data.get("payment", {})
-        customer_raw = payment.get("customer", {})
+        payment_id = payment.get("id")
+        customer_raw = payment.get("customer", None)
 
-        # Se for string, é o ID, busca dados completos
+        print("📦 Valor de payment['customer']:", customer_raw)
+
+        customer = {}
+
         if isinstance(customer_raw, str):
             customer = get_customer_data(customer_raw)
         elif isinstance(customer_raw, dict):
             customer = customer_raw
         else:
-            customer = {}
+            # ⚠️ Fallback: busca a cobrança pelo ID e extrai o customer ID
+            print("⚠️ 'customer' ausente ou inválido, buscando com payment_id...")
+            payment_full = get_payment_data(payment_id)
+            if payment_full:
+                customer_id = payment_full.get("customer")
+                if customer_id:
+                    customer = get_customer_data(customer_id)
 
         nome = customer.get("name", "")
         email = customer.get("email", "")
         telefone = customer.get("phone", "") or "11999999999"
 
-        print(f"Criando vendedor: {nome}, {email}, {telefone}")
+        print(f"🛒 Criando vendedor: {nome}, {email}, {telefone}")
         criar_vendedor_webkul(nome, email, telefone)
 
     return "ok", 200
@@ -57,7 +77,7 @@ def criar_vendedor_webkul(nome, email, telefone):
         "sp_store_name": f"Loja de {nome}",
         "seller_name": nome,
         "email": email,
-        "password": "senha12345",
+        "password": "senha12345",  # Se for produção, ideal gerar dinamicamente e enviar ao usuário.
         "state": "SP",
         "country": "Brasil",
         "contact": telefone,
@@ -69,7 +89,7 @@ def criar_vendedor_webkul(nome, email, telefone):
     }
 
     response = requests.post(url, json=payload, headers=headers)
-    print("Resposta Webkul:", response.status_code, response.text)
+    print("📬 Resposta Webkul:", response.status_code, response.text)
 
 
 if __name__ == "__main__":
