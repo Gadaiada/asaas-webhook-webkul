@@ -111,8 +111,12 @@ def criar_vendedor_webkul(nome, email, telefone):
         "country": "Brasil",
         "contact": telefone,
         "custom_fields": [
-            {CUSTOM_FIELD_ID: CUSTOM_FIELD_VALUE}
-        ],
+    {
+        "id": CUSTOM_FIELD_ID,
+        "value": CUSTOM_FIELD_VALUE
+    }
+],
+
         "send_welcome_email": "1",
         "send_email_verification_link": "0"
     }
@@ -122,6 +126,7 @@ def criar_vendedor_webkul(nome, email, telefone):
         print("✅ Vendedor criado com sucesso.")
     else:
         print("❌ Erro ao criar vendedor Webkul:", response.status_code, response.text)
+
 
 # ▶️ Iniciar app Flask
 if __name__ == "__main__":
