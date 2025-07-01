@@ -33,7 +33,7 @@ if not CONFIG["WEBKUL_API_KEY"] or not CONFIG["ASAAS_API_KEY"]:
 def gerar_senha(tamanho=12):
     """Gera senha aleatória segura"""
     caracteres = string.ascii_letters + string.digits + "!@#$%&*"
-    return ''.join(random.choice(caracteres) for _ in range(tamanho))
+    return ''.join([random.choice(caracteres) for _ in range(tamanho)])
 
 def formatar_telefone(numero):
     """Remove formatação do telefone"""
@@ -85,18 +85,24 @@ class WebkulAPI:
             "send_email_verification_link": "0"
         }
 
+        print(f"📤 Enviando payload para Webkul: {payload}")  # Log para debug
         response = requests.post(url, json=payload, headers=headers)
         
         if response.status_code == 200:
+            print("✅ Vendedor criado com sucesso.")
             return True, response.json()
         else:
+            print(f"❌ Erro {response.status_code} ao criar vendedor: {response.text}")
             return False, response.json()
 
-# 🎯 Rota do Webhook
-@app.route("/webhook", methods=["POST"])
+# 🎯 Rota do Webhook - Corrigida para /webhook-asaas
+@app.route("/webhook-asaas", methods=["POST"])
 def webhook_handler():
     try:
         data = request.get_json()
+        if not data:
+            return jsonify({"error": "Dados não fornecidos"}), 400
+
         log_webhook(data)
 
         if data.get("event") != "PAYMENT_CONFIRMED":
@@ -106,16 +112,16 @@ def webhook_handler():
         customer_id = payment.get("customer")
         
         if not customer_id:
-            return jsonify({"error": "Customer ID missing"}), 400
+            return jsonify({"error": "Customer ID ausente"}), 400
 
         # Busca dados do cliente
         customer = AsaasAPI.get_customer(customer_id)
         if not customer:
-            return jsonify({"error": "Customer not found"}), 404
+            return jsonify({"error": "Cliente não encontrado"}), 404
 
         # Valida dados mínimos
         if not all([customer.get("name"), customer.get("email")]):
-            return jsonify({"error": "Invalid customer data"}), 400
+            return jsonify({"error": "Dados do cliente incompletos"}), 400
 
         # Cria vendedor no Webkul
         success, response = WebkulAPI.criar_vendedor(
@@ -131,7 +137,7 @@ def webhook_handler():
 
     except Exception as e:
         print(f"❌ Erro crítico: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": "Erro interno do servidor"}), 500
 
 # 🏁 Health Check
 @app.route("/")
@@ -139,8 +145,9 @@ def health_check():
     return jsonify({
         "status": "online",
         "service": "Asaas-Webkul Webhook",
-        "version": "1.0.0"
+        "version": "1.0.1"
     })
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
