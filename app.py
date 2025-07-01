@@ -67,36 +67,40 @@ class AsaasAPI:
 class WebkulAPI:
     @staticmethod
     def criar_vendedor(email):
-        url = f"{CONFIG['WEBKUL_API_URL']}/sellers.json"
-        headers = {
-            "Authorization": f"Bearer {CONFIG['WEBKUL_API_KEY']}",
-            "Content-Type": "application/json"
-        }
+    url = f"{CONFIG['WEBKUL_API_URL']}/sellers.json"
+    headers = {
+        "Authorization": f"Bearer {CONFIG['WEBKUL_API_KEY']}",
+        "Content-Type": "application/json"
+    }
 
-        payload = {
-            "sp_store_name": gerar_nome_loja(),
-            "seller_name": gerar_nome_vendedor(),
-            "email": email,
-            "password": "12345",  # Senha fixa
-            "state": CONFIG["DEFAULT_STATE"],
-            "country": CONFIG["DEFAULT_COUNTRY"],
-            "contact": gerar_telefone(),
-            "custom_fields": {
-                CONFIG["CUSTOM_FIELD_ID"]: CONFIG["CUSTOM_FIELD_VALUE"]
-            },
-            "send_welcome_email": "0",
-            "send_email_verification_link": "0"
-        }
+    payload = {
+        "sp_store_name": gerar_nome_loja(),
+        "seller_name": gerar_nome_vendedor(),
+        "email": email,
+        "password": "12345",
+        "state": CONFIG["DEFAULT_STATE"],
+        "country": CONFIG["DEFAULT_COUNTRY"],
+        "contact": gerar_telefone(),
+        # Estrutura específica para planos Webkul:
+        "seller_plan": {
+            "id": "5734",  # ID do plano da sua imagem
+            "name": "Assinatura Vendedor Mensal",  # Nome exato do plano
+            "billing_period": "30days",  # Período do plano
+            "price": "45.00"  # Preço (opcional)
+        },
+        "send_welcome_email": "0",
+        "send_email_verification_link": "0"
+    }
 
-        print(f"📤 Enviando para Webkul: {payload}")
-        response = requests.post(url, json=payload, headers=headers)
-        
-        if response.status_code == 200:
-            print("✅ Vendedor criado com sucesso!")
-            return True, response.json()
-        
-        print(f"❌ Falha na API Webkul: {response.status_code} - {response.text}")
-        return False, response.text
+    print("📤 Payload completo:", json.dumps(payload, indent=2))
+    response = requests.post(url, json=payload, headers=headers)
+    
+    if response.status_code == 200:
+        print("✅ Vendedor criado com plano 5734")
+        return True, response.json()
+    
+    print("❌ Erro na API:", response.text)
+    return False, response.json()
 
 # 🎯 Rota do Webhook (Corrigida)
 @app.route("/webhook-asaas", methods=["POST"])
