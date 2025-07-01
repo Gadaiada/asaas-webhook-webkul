@@ -4,14 +4,15 @@ import os
 import sys
 import random
 import string
+import json
 from dotenv import load_dotenv
 
-# 🔐 Carrega variáveis de ambiente
+# Carrega variáveis de ambiente
 load_dotenv()
 
 app = Flask(__name__)
 
-# 🔑 Configurações
+# Configurações
 CONFIG = {
     "WEBKUL_API_KEY": os.getenv("WEBKUL_API_KEY"),
     "ASAAS_API_KEY": os.getenv("ASAAS_API_KEY"),
@@ -24,16 +25,16 @@ CONFIG = {
     "WEBKUL_API_URL": os.getenv("WEBKUL_API_URL", "https://mvmapi.webkul.com/api/v2")
 }
 
-# 🚨 Validação inicial
+# Validação inicial
 if not CONFIG["WEBKUL_API_KEY"] or not CONFIG["ASAAS_API_KEY"]:
     print("❌ ERRO: Variáveis de ambiente ausentes!")
     sys.exit(1)
 
-# 🔧 Utilitários
+# Utilitários
 def gerar_nome_loja():
     """Gera um nome de loja aleatório"""
-    prefixos = ["Mega", "Super", "Prime", "Elite", "Gold"]
-    sufixos = ["Store", "Shop", "Market", "Commerce"]
+    prefixos = ["Mega", "Super", "Top", "Prime", "Elite"]
+    sufixos = ["Store", "Shop", "Commerce", "Market"]
     return f"{random.choice(prefixos)}{random.choice(sufixos)}{random.randint(100,999)}"
 
 def gerar_nome_vendedor():
@@ -50,7 +51,7 @@ def log_webhook(data):
     print(f"📦 Payment ID: {data.get('payment', {}).get('id')}")
     print(f"👤 Customer ID: {data.get('payment', {}).get('customer')}")
 
-# 🔄 Integração com APIs
+# Integração com APIs
 class AsaasAPI:
     @staticmethod
     def get_customer(customer_id):
@@ -67,42 +68,42 @@ class AsaasAPI:
 class WebkulAPI:
     @staticmethod
     def criar_vendedor(email):
-    url = f"{CONFIG['WEBKUL_API_URL']}/sellers.json"
-    headers = {
-        "Authorization": f"Bearer {CONFIG['WEBKUL_API_KEY']}",
-        "Content-Type": "application/json"
-    }
+        """Cria um novo vendedor no Webkul com plano de assinatura"""
+        url = f"{CONFIG['WEBKUL_API_URL']}/sellers.json"
+        headers = {
+            "Authorization": f"Bearer {CONFIG['WEBKUL_API_KEY']}",
+            "Content-Type": "application/json"
+        }
 
-    payload = {
-        "sp_store_name": gerar_nome_loja(),
-        "seller_name": gerar_nome_vendedor(),
-        "email": email,
-        "password": "12345",
-        "state": CONFIG["DEFAULT_STATE"],
-        "country": CONFIG["DEFAULT_COUNTRY"],
-        "contact": gerar_telefone(),
-        # Estrutura específica para planos Webkul:
-        "seller_plan": {
-            "id": "5734",  # ID do plano da sua imagem
-            "name": "Assinatura Vendedor Mensal",  # Nome exato do plano
-            "billing_period": "30days",  # Período do plano
-            "price": "45.00"  # Preço (opcional)
-        },
-        "send_welcome_email": "0",
-        "send_email_verification_link": "0"
-    }
+        payload = {
+            "sp_store_name": gerar_nome_loja(),
+            "seller_name": gerar_nome_vendedor(),
+            "email": email,
+            "password": "12345",
+            "state": CONFIG["DEFAULT_STATE"],
+            "country": CONFIG["DEFAULT_COUNTRY"],
+            "contact": gerar_telefone(),
+            "seller_plan": {
+                "id": CONFIG["CUSTOM_FIELD_ID"],
+                "name": CONFIG["CUSTOM_FIELD_VALUE"],
+                "billing_period": "30days",
+                "price": "45.00"
+            },
+            "send_welcome_email": "0",
+            "send_email_verification_link": "0"
+        }
 
-    print("📤 Payload completo:", json.dumps(payload, indent=2))
-    response = requests.post(url, json=payload, headers=headers)
-    
-    if response.status_code == 200:
-        print("✅ Vendedor criado com plano 5734")
-        return True, response.json()
-    
-    print("❌ Erro na API:", response.text)
-    return False, response.json()
+        print(f"📤 Enviando para Webkul: {json.dumps(payload, indent=2)}")
+        response = requests.post(url, json=payload, headers=headers)
+        
+        if response.status_code == 200:
+            print("✅ Vendedor criado com sucesso!")
+            return True, response.json()
+        
+        print(f"❌ Falha na API Webkul: {response.status_code} - {response.text}")
+        return False, response.text
 
-# 🎯 Rota do Webhook (Corrigida)
+# Rota do Webhook
 @app.route("/webhook-asaas", methods=["POST"])
 def webhook_handler():
     try:
@@ -149,7 +150,7 @@ def webhook_handler():
         print(f"❌ ERRO CRÍTICO: {str(e)}")
         return jsonify({"error": "Erro interno"}), 500
 
-# 🔥 Endpoint de Teste (REMOVA EM PRODUÇÃO)
+# Endpoint de Teste (REMOVA EM PRODUÇÃO)
 @app.route("/teste-vendedor", methods=["GET", "POST"])
 def teste_vendedor():
     try:
@@ -173,10 +174,10 @@ def teste_vendedor():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# 🏁 Health Check
+# Health Check
 @app.route("/")
 def health_check():
-    return jsonify({"status": "online", "service": "Asaas-Webkul"})
+    return jsonify({"status": "online", "service": "Asaas-Webkul Webhook"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
