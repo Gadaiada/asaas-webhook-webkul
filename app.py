@@ -5,7 +5,6 @@ import sys
 import random
 import string
 from dotenv import load_dotenv
-from functools import wraps
 
 # 🔐 Carrega variáveis do .env
 load_dotenv()
@@ -38,7 +37,7 @@ def gerar_senha(tamanho=12):
 
 def formatar_telefone(numero):
     """Remove formatação do telefone"""
-    return ''.join(filter(str.isdigit, str(numero))[:15] or CONFIG["DEFAULT_PHONE"]
+    return ''.join(filter(str.isdigit, str(numero)))[:15] or CONFIG["DEFAULT_PHONE"]
 
 def log_webhook(data):
     """Registra dados do webhook para debug"""
