@@ -3,7 +3,6 @@ import requests
 import os
 import sys
 import random
-import string
 import json
 from dotenv import load_dotenv
 
@@ -32,24 +31,13 @@ if not CONFIG["WEBKUL_API_KEY"] or not CONFIG["ASAAS_API_KEY"]:
 
 # Utilitários
 def gerar_nome_loja():
-    """Gera um nome de loja aleatório"""
-    prefixos = ["Mega", "Super", "Top", "Prime", "Elite"]
-    sufixos = ["Store", "Shop", "Commerce", "Market"]
-    return f"{random.choice(prefixos)}{random.choice(sufixos)}{random.randint(100,999)}"
+    return f"Loja{random.randint(1000,9999)}"
 
 def gerar_nome_vendedor():
-    """Gera um nome de vendedor aleatório"""
     return f"Vendedor{random.randint(1000,9999)}"
 
 def gerar_telefone():
-    """Gera um telefone aleatório"""
     return f"11{random.randint(900000000, 999999999)}"
-
-def log_webhook(data):
-    """Registra dados do webhook"""
-    print(f"🔔 Webhook Recebido - Evento: {data.get('event')}")
-    print(f"📦 Payment ID: {data.get('payment', {}).get('id')}")
-    print(f"👤 Customer ID: {data.get('payment', {}).get('customer')}")
 
 # Integração com APIs
 class AsaasAPI:
@@ -58,17 +46,34 @@ class AsaasAPI:
         url = f"{CONFIG['ASAAS_API_URL']}/customers/{customer_id}"
         headers = {"access_token": CONFIG["ASAAS_API_KEY"]}
         response = requests.get(url, headers=headers)
-        
+
         if response.status_code != 200:
             print(f"❌ Erro ao buscar cliente: {response.status_code} - {response.text}")
             return None
-        
+
         return response.json()
+
+    @staticmethod
+    def get_customer_by_payment_id(payment_id):
+        url = f"{CONFIG['ASAAS_API_URL']}/payments/{payment_id}"
+        headers = {"access_token": CONFIG["ASAAS_API_KEY"]}
+        response = requests.get(url, headers=headers)
+
+        if response.status_code != 200:
+            print(f"❌ Erro ao buscar pagamento: {response.status_code} - {response.text}")
+            return None
+
+        payment_data = response.json()
+        customer_id = payment_data.get("customer")
+        if not customer_id:
+            print("❌ Nenhum customer_id encontrado no pagamento.")
+            return None
+
+        return AsaasAPI.get_customer(customer_id)
 
 class WebkulAPI:
     @staticmethod
-    def criar_vendedor(email):
-        """Cria um novo vendedor no Webkul com plano de assinatura"""
+    def criar_vendedor(email, nome):
         url = f"{CONFIG['WEBKUL_API_URL']}/sellers.json"
         headers = {
             "Authorization": f"Bearer {CONFIG['WEBKUL_API_KEY']}",
@@ -77,9 +82,9 @@ class WebkulAPI:
 
         payload = {
             "sp_store_name": gerar_nome_loja(),
-            "seller_name": gerar_nome_vendedor(),
+            "seller_name": nome or gerar_nome_vendedor(),
             "email": email,
-            "password": "12345",
+            "password": "1234",  # Senha provisória
             "state": CONFIG["DEFAULT_STATE"],
             "country": CONFIG["DEFAULT_COUNTRY"],
             "contact": gerar_telefone(),
@@ -95,89 +100,69 @@ class WebkulAPI:
 
         print(f"📤 Enviando para Webkul: {json.dumps(payload, indent=2)}")
         response = requests.post(url, json=payload, headers=headers)
-        
+
         if response.status_code == 200:
             print("✅ Vendedor criado com sucesso!")
             return True, response.json()
-        
-        print(f"❌ Falha na API Webkul: {response.status_code} - {response.text}")
+
+        print(f"❌ Falha na criação do vendedor: {response.status_code} - {response.text}")
         return False, response.text
 
-# Rota do Webhook
+# Webhook Asaas
 @app.route("/webhook-asaas", methods=["POST"])
 def webhook_handler():
     try:
         data = request.get_json()
         if not data:
-            return jsonify({"error": "Dados não fornecidos"}), 400
+            return jsonify({"error": "Dados ausentes"}), 400
 
-        log_webhook(data)
+        print("🔔 Webhook recebido:", data.get("event"))
 
         if data.get("event") != "PAYMENT_CONFIRMED":
-            return jsonify({"status": "ignored"}), 200
+            return jsonify({"status": "ignorado"}), 200
 
         payment = data.get("payment", {})
         customer_id = payment.get("customer")
-        
-        if not customer_id:
-            return jsonify({"error": "Customer ID ausente"}), 400
 
-        customer = AsaasAPI.get_customer(customer_id)
+        # Fallback se customer vier nulo
+        if customer_id:
+            customer = AsaasAPI.get_customer(customer_id)
+        else:
+            payment_id = payment.get("id")
+            print("⚠️ Customer ID ausente. Buscando por payment_id:", payment_id)
+            customer = AsaasAPI.get_customer_by_payment_id(payment_id)
+
         if not customer:
             return jsonify({"error": "Cliente não encontrado"}), 404
 
-        email = customer.get("email")
+        nome = customer.get("name", "")
+        email = customer.get("email", "")
         if not email:
-            return jsonify({"error": "E-mail não encontrado"}), 400
+            return jsonify({"error": "E-mail não disponível"}), 400
 
-        success, response = WebkulAPI.criar_vendedor(email)
+        sucesso, resposta = WebkulAPI.criar_vendedor(email=email, nome=nome)
 
-        if success:
+        if sucesso:
             return jsonify({
-                "status": "success",
+                "status": "vendedor_criado",
                 "email": email,
-                "senha": "12345",
-                "data": response
+                "senha": "1234",
+                "resposta": resposta
             }), 200
         else:
             return jsonify({
-                "status": "error",
-                "error": "Falha ao criar vendedor",
-                "details": response
+                "status": "erro",
+                "mensagem": resposta
             }), 422
 
     except Exception as e:
-        print(f"❌ ERRO CRÍTICO: {str(e)}")
+        print(f"❌ Erro geral no webhook: {str(e)}")
         return jsonify({"error": "Erro interno"}), 500
 
-# Endpoint de Teste (REMOVA EM PRODUÇÃO)
-@app.route("/teste-vendedor", methods=["GET", "POST"])
-def teste_vendedor():
-    try:
-        email = request.json.get("email", "teste@exemplo.com") if request.method == "POST" else "teste@exemplo.com"
-        
-        success, response = WebkulAPI.criar_vendedor(email)
-        
-        if success:
-            return jsonify({
-                "status": "success",
-                "email": email,
-                "senha": "12345",
-                "data": response
-            }), 200
-        else:
-            return jsonify({
-                "status": "error",
-                "error": response
-            }), 400
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# Health Check
+# Health check
 @app.route("/")
-def health_check():
-    return jsonify({"status": "online", "service": "Asaas-Webkul Webhook"})
+def status():
+    return jsonify({"status": "online"})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
