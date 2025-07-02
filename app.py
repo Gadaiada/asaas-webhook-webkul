@@ -1,11 +1,10 @@
 from flask import Flask, request, jsonify
 import requests
 import os
-import random
 import json
+from datetime import datetime
 from dotenv import load_dotenv
 
-# Carrega variáveis de ambiente
 load_dotenv()
 
 app = Flask(__name__)
@@ -14,126 +13,141 @@ app = Flask(__name__)
 CONFIG = {
     "WEBKUL_API_KEY": os.getenv("WEBKUL_API_KEY"),
     "ASAAS_API_KEY": os.getenv("ASAAS_API_KEY"),
+    "WEBHOOK_SECRET": os.getenv("WEBHOOK_SECRET"),
     "PLANO_ID": os.getenv("PLANO_ID", "5734"),
     "PLANO_NOME": os.getenv("PLANO_NOME", "Assinatura Vendedor Mensal"),
     "ESTADO_PADRAO": os.getenv("ESTADO_PADRAO", "SP"),
     "PAIS_PADRAO": os.getenv("PAIS_PADRAO", "BR"),
-    "SENHA_PADRAO": os.getenv("SENHA_PADRAO", "12345"),
-    "ASAAS_API_URL": os.getenv("ASAAS_API_URL", "https://sandbox.asaas.com/api/v3"),
-    "WEBKUL_API_URL": os.getenv("WEBKUL_API_URL", "https://mvmapi.webkul.com/api/v2")
+    "SENHA_PADRAO": os.getenv("SENHA_PADRAO", "12345")
 }
 
-# Validação inicial
-if not CONFIG["WEBKUL_API_KEY"]:
-    print("❌ ERRO: Token do Webkul não configurado!")
-    exit(1)
+# Schema de validação para o webhook
+WEBHOOK_SCHEMA = {
+    "type": "object",
+    "required": ["event", "payment"],
+    "properties": {
+        "event": {"type": "string"},
+        "payment": {
+            "type": "object",
+            "required": ["customer", "value", "status"],
+            "properties": {
+                "customer": {"type": "string"},
+                "value": {"type": "number"},
+                "status": {"type": "string"}
+            }
+        }
+    }
+}
 
-# Utilitários
-def gerar_nome_loja(nome):
-    """Gera nome da loja baseado no nome do cliente"""
-    try:
-        nome_base = nome.split()[0]
-        return f"Loja {nome_base}{random.randint(100,999)}"
-    except:
-        return f"Loja Cliente{random.randint(1000,9999)}"
-
-def validar_webhook(data):
-    """Valida a estrutura do webhook"""
-    required_fields = ['event', 'payment']
-    if not all(field in data for field in required_fields):
-        return False, "Campos obrigatórios faltando"
+def validate_json(data, schema):
+    """Valida o JSON contra um schema especificado"""
+    errors = []
     
-    if not isinstance(data.get('payment', {}), dict):
-        return False, "Dados de pagamento inválidos"
+    # Verifica campos obrigatórios
+    for field in schema.get('required', []):
+        if field not in data:
+            errors.append(f"Campo obrigatório faltando: {field}")
     
-    return True, ""
+    # Verifica tipos dos campos
+    for field, props in schema.get('properties', {}).items():
+        if field in data:
+            if not isinstance(data[field], props['type']):
+                errors.append(f"Campo {field} deve ser do tipo {props['type'].__name__}")
+    
+    return errors
 
 @app.route("/webhook-asaas", methods=["POST"])
 def webhook_handler():
+    # Verificação inicial do cabeçalho
+    if not request.is_json:
+        return jsonify({
+            "error": "Content-Type inválido",
+            "message": "O cabeçalho Content-Type deve ser application/json"
+        }), 400
+    
+    # Verificação do segredo do webhook
+    if request.headers.get('X-Webhook-Secret') != CONFIG['WEBHOOK_SECRET']:
+        return jsonify({
+            "error": "Não autorizado",
+            "message": "Secret do webhook inválido"
+        }), 401
+    
     try:
-        # Verificação inicial
-        if not request.is_json:
-            return jsonify({"error": "Content-Type deve ser application/json"}), 415
-        
         data = request.get_json()
-        is_valid, msg = validar_webhook(data)
+    except Exception as e:
+        return jsonify({
+            "error": "JSON inválido",
+            "message": str(e)
+        }), 400
+    
+    # Validação contra o schema
+    validation_errors = validate_json(data, WEBHOOK_SCHEMA)
+    if validation_errors:
+        return jsonify({
+            "error": "Dados inválidos",
+            "details": validation_errors,
+            "expected_format": WEBHOOK_SCHEMA
+        }), 400
+    
+    # Processamento específico para pagamentos confirmados
+    if data['event'] == 'PAYMENT_CONFIRMED':
+        payment = data['payment']
         
-        if not is_valid:
-            return jsonify({"error": msg}), 400
-
-        print(f"🔔 Webhook recebido: {data.get('event')}")
-
-        # Processa apenas pagamentos confirmados
-        if data.get("event") != "PAYMENT_CONFIRMED":
-            return jsonify({"status": "success", "message": "Evento não processado"}), 200
-
-        payment = data.get("payment", {})
-        customer_id = payment.get("customer")
+        # Validações adicionais para pagamentos
+        if payment['status'] != 'CONFIRMED':
+            return jsonify({
+                "error": "Status de pagamento inválido",
+                "message": "Apenas pagamentos CONFIRMED são processados"
+            }), 400
         
-        if not customer_id:
-            return jsonify({"error": "Customer ID não encontrado"}), 400
-
-        # Busca dados do cliente no Asaas
-        headers = {"access_token": CONFIG["ASAAS_API_KEY"]}
-        response = requests.get(f"{CONFIG['ASAAS_API_URL']}/customers/{customer_id}", headers=headers)
+        if payment['value'] <= 0:
+            return jsonify({
+                "error": "Valor de pagamento inválido",
+                "message": "O valor do pagamento deve ser positivo"
+            }), 400
         
-        if response.status_code != 200:
-            return jsonify({"error": "Falha ao buscar cliente no Asaas"}), 400
-
-        customer = response.json()
-        nome = customer.get("name", "").strip()
-        email = customer.get("email", "").strip()
-
-        if not nome or not email:
-            return jsonify({"error": "Nome ou e-mail do cliente ausentes"}), 400
-
-        # Prepara dados para o Webkul
-        payload = {
-            "sp_store_name": gerar_nome_loja(nome),
-            "seller_name": nome[:50],
-            "email": email,
-            "password": CONFIG["SENHA_PADRAO"],
-            "state": CONFIG["ESTADO_PADRAO"],
-            "country": CONFIG["PAIS_PADRAO"],
-            "contact": f"11{random.randint(900000000, 999999999)}",
-            "seller_plan": {
-                "id": CONFIG["PLANO_ID"],
-                "name": CONFIG["PLANO_NOME"]
-            },
-            "send_welcome_email": "0"
-        }
-
-        # Envia para Webkul
-        headers = {
-            "Authorization": f"Bearer {CONFIG['WEBKUL_API_KEY']}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(
-            f"{CONFIG['WEBKUL_API_URL']}/sellers.json",
-            json=payload,
-            headers=headers
-        )
-
-        if response.status_code == 200:
+        # Aqui você adicionaria a lógica para criar o vendedor
+        try:
+            # Exemplo: buscar dados do cliente no Asaas
+            customer_url = f"https://api.asaas.com/v3/customers/{payment['customer']}"
+            headers = {"access_token": CONFIG["ASAAS_API_KEY"]}
+            response = requests.get(customer_url, headers=headers)
+            
+            if response.status_code != 200:
+                return jsonify({
+                    "error": "Falha ao buscar cliente",
+                    "details": response.json()
+                }), 400
+            
+            customer_data = response.json()
+            
+            # Simulação de criação do vendedor
+            vendedor = {
+                "nome": customer_data.get('name', 'Novo Vendedor'),
+                "email": customer_data['email'],
+                "data_criacao": datetime.now().isoformat(),
+                "status": "ativo"
+            }
+            
             return jsonify({
                 "status": "success",
-                "message": "Vendedor criado com sucesso"
+                "vendedor": vendedor
             }), 200
-        
-        return jsonify({
-            "status": "error",
-            "error": "Falha ao criar vendedor",
-            "details": response.text
-        }), 422
-
-    except Exception as e:
-        print(f"❌ Erro inesperado: {str(e)}")
-        return jsonify({"error": "Erro interno no servidor"}), 500
+            
+        except Exception as e:
+            return jsonify({
+                "error": "Erro ao processar pagamento",
+                "message": str(e)
+            }), 500
+    
+    return jsonify({"status": "ignored"}), 200
 
 @app.route("/")
 def health_check():
-    return jsonify({"status": "online"})
+    return jsonify({
+        "status": "online",
+        "timestamp": datetime.now().isoformat()
+    })
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
